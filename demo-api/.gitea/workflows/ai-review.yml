@@ -1,0 +1,47 @@
+# AI-ревью PR: дифф → модель через LiteLLM → комментарий в PR.
+# Чеклист ревью — в переменной CHECKLIST (ДЗ занятия 2: доработать под свою команду).
+name: ai-review
+on: pull_request
+
+jobs:
+  review:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    env:
+      GITEA_API: http://gitea:3000/api/v1
+      LITELLM_URL: http://litellm:4000
+      MODEL: local-coder
+      REPO: ${{ github.repository }}
+      PR: ${{ github.event.pull_request.number }}
+      GITEA_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+      LITELLM_KEY: ${{ secrets.LITELLM_KEY }}
+      CHECKLIST: |
+        - SQL-инъекции и небезопасная работа с вводом
+        - Ошибки в логике: границы, off-by-one, отрицательные значения, деньги во float
+        - Проглоченные исключения, отсутствие транзакций
+        - Секреты в коде и логах
+        - Блокирующие вызовы в async-коде, N+1 запросы
+    steps:
+      - name: review
+        shell: python
+        run: |
+          import json, os, urllib.request
+
+          def call(url, data=None, token=None, auth="token"):
+              req = urllib.request.Request(url, data=json.dumps(data).encode() if data else None,
+                                           headers={"Content-Type": "application/json", "Authorization": f"{auth} {token}"})
+              with urllib.request.urlopen(req, timeout=900) as r:
+                  return r.read().decode()
+
+          e = os.environ
+          diff = call(f"{e['GITEA_API']}/repos/{e['REPO']}/pulls/{e['PR']}.diff", token=e["GITEA_TOKEN"])[:12000]
+          prompt = (f"Ты — строгий ревьюер Python-кода. Проверь дифф по чеклисту:\n{e['CHECKLIST']}\n"
+                    "Для каждой проблемы: файл, строка, что не так, как исправить. Если проблем нет — так и напиши. "
+                    f"Отвечай по-русски, в markdown.\n\n```diff\n{diff}\n```")
+          resp = json.loads(call(f"{e['LITELLM_URL']}/v1/chat/completions", token=e["LITELLM_KEY"], auth="Bearer",
+                                 data={"model": e["MODEL"], "messages": [{"role": "user", "content": prompt}],
+                                       "metadata": {"trace_name": "ci-review", "tags": ["ci"]}}))
+          review = resp["choices"][0]["message"]["content"]
+          print(review)
+          call(f"{e['GITEA_API']}/repos/{e['REPO']}/issues/{e['PR']}/comments", token=e["GITEA_TOKEN"],
+               data={"body": f"### 🤖 AI-ревью ({e['MODEL']})\n\n{review}"})

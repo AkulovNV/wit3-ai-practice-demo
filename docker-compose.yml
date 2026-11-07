@@ -1,0 +1,287 @@
+name: wit3
+
+# Порты на хосте:
+#   4000 LiteLLM · 8080 Open WebUI · 3001 Langfuse · 3000 Grafana · 9090 Prometheus
+#   8000 demo-api · 3002 Gitea · 15432 Postgres · 11434 Ollama (нативная или профиль ollama)
+
+# Все порты слушают только 127.0.0.1: стенд с учебными кредами не должен быть виден из Wi-Fi.
+
+x-logging: &logging
+  driver: json-file
+  options: { max-size: "10m", max-file: "2" }
+
+services:
+  # ---------- данные ----------
+  postgres:
+    image: postgres:17-alpine
+    environment:
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: postgres
+    volumes:
+      - pg:/var/lib/postgresql/data
+      - ./config/postgres-init.sql:/docker-entrypoint-initdb.d/init.sql:ro
+    ports: ["127.0.0.1:15432:5432"]
+    healthcheck:
+      test: ["CMD", "pg_isready", "-U", "postgres"]
+      interval: 3s
+      retries: 20
+    logging: *logging
+
+  # ---------- модели (запасной вариант: Ollama в контейнере) ----------
+  ollama:
+    image: ollama/ollama:0.40.14
+    profiles: [ollama]
+    environment:
+      OLLAMA_MAX_LOADED_MODELS: "1"
+      OLLAMA_NUM_PARALLEL: "1"
+      OLLAMA_CONTEXT_LENGTH: "8192"
+    volumes: [ollama:/root/.ollama]
+    ports: ["127.0.0.1:11434:11434"]
+    logging: *logging
+
+  # ---------- gateway ----------
+  litellm:
+    image: ghcr.io/berriai/litellm:main-stable@sha256:c560d317136880ea92d62334d4367ab10955b1af189dd3ea24f6551290b1d6c1  # v1.108.0
+    command: ["--config", "/app/config.yaml", "--port", "4000"]
+    environment:
+      DATABASE_URL: postgresql://postgres:postgres@postgres:5432/litellm
+      LITELLM_MASTER_KEY: ${LITELLM_MASTER_KEY}
+      OLLAMA_BASE_URL: ${OLLAMA_BASE_URL}
+      ANTHROPIC_API_KEY: ${ANTHROPIC_API_KEY:-}
+      LANGFUSE_HOST: http://langfuse:3000
+      LANGFUSE_PUBLIC_KEY: ${LANGFUSE_PUBLIC_KEY}
+      LANGFUSE_SECRET_KEY: ${LANGFUSE_SECRET_KEY}
+      STORE_MODEL_IN_DB: "False"
+    volumes: [./config/litellm.yaml:/app/config.yaml:ro]
+    ports: ["127.0.0.1:4000:4000"]
+    extra_hosts: ["host.docker.internal:host-gateway"]
+    depends_on:
+      postgres: { condition: service_healthy }
+    logging: *logging
+
+  # ---------- клиенты ----------
+  open-webui:
+    image: ghcr.io/open-webui/open-webui:v0.13.0
+    environment:
+      OPENAI_API_BASE_URL: http://litellm:4000/v1
+      OPENAI_API_KEY: ${LITELLM_USER_KEY}
+      ENABLE_OLLAMA_API: "False"
+      ENABLE_PERSISTENT_CONFIG: "False"   # настройки всегда из env, а не из БД Open WebUI
+      WEBUI_AUTH: "False"
+      # без фоновых LLM-вызовов (заголовки, теги, автодополнение) — на CPU они съедают модель
+      ENABLE_TITLE_GENERATION: "False"
+      ENABLE_TAGS_GENERATION: "False"
+      ENABLE_FOLLOW_UP_GENERATION: "False"
+      ENABLE_AUTOCOMPLETE_GENERATION: "False"
+      # эмбеддинги для RAG тоже через gateway
+      RAG_EMBEDDING_ENGINE: openai
+      RAG_EMBEDDING_MODEL: local-embed
+      RAG_OPENAI_API_BASE_URL: http://litellm:4000/v1
+      RAG_OPENAI_API_KEY: ${LITELLM_USER_KEY}
+    volumes: [openwebui:/app/backend/data]
+    ports: ["127.0.0.1:8080:8080"]
+    depends_on: [litellm]
+    logging: *logging
+
+  # ---------- LLM-observability (Langfuse v4: web + worker + ClickHouse + Redis + MinIO) ----------
+  langfuse:
+    image: langfuse/langfuse:4.75.0
+    environment: &langfuse-env
+      DATABASE_URL: postgresql://postgres:postgres@postgres:5432/langfuse
+      NEXTAUTH_URL: http://localhost:3001
+      NEXTAUTH_SECRET: wit3-local-secret
+      SALT: wit3-local-salt
+      ENCRYPTION_KEY: "0000000000000000000000000000000000000000000000000000000000000000"
+      TELEMETRY_ENABLED: "false"
+      CLICKHOUSE_MIGRATION_URL: clickhouse://clickhouse:9000
+      CLICKHOUSE_URL: http://clickhouse:8123
+      CLICKHOUSE_USER: clickhouse
+      CLICKHOUSE_PASSWORD: clickhouse
+      CLICKHOUSE_CLUSTER_ENABLED: "false"
+      REDIS_HOST: redis
+      REDIS_AUTH: wit3-redis
+      LANGFUSE_S3_EVENT_UPLOAD_BUCKET: langfuse
+      LANGFUSE_S3_EVENT_UPLOAD_REGION: auto
+      LANGFUSE_S3_EVENT_UPLOAD_ACCESS_KEY_ID: minio
+      LANGFUSE_S3_EVENT_UPLOAD_SECRET_ACCESS_KEY: miniosecret
+      LANGFUSE_S3_EVENT_UPLOAD_ENDPOINT: http://minio:9000
+      LANGFUSE_S3_EVENT_UPLOAD_FORCE_PATH_STYLE: "true"
+      LANGFUSE_S3_MEDIA_UPLOAD_BUCKET: langfuse
+      LANGFUSE_S3_MEDIA_UPLOAD_REGION: auto
+      LANGFUSE_S3_MEDIA_UPLOAD_ACCESS_KEY_ID: minio
+      LANGFUSE_S3_MEDIA_UPLOAD_SECRET_ACCESS_KEY: miniosecret
+      LANGFUSE_S3_MEDIA_UPLOAD_ENDPOINT: http://minio:9000
+      LANGFUSE_S3_MEDIA_UPLOAD_FORCE_PATH_STYLE: "true"
+      LANGFUSE_INIT_ORG_ID: wit3
+      LANGFUSE_INIT_ORG_NAME: WIT3
+      LANGFUSE_INIT_PROJECT_ID: wit3
+      LANGFUSE_INIT_PROJECT_NAME: wit3-stand
+      LANGFUSE_INIT_PROJECT_PUBLIC_KEY: ${LANGFUSE_PUBLIC_KEY}
+      LANGFUSE_INIT_PROJECT_SECRET_KEY: ${LANGFUSE_SECRET_KEY}
+      LANGFUSE_INIT_USER_EMAIL: admin@wit3.local
+      LANGFUSE_INIT_USER_NAME: admin
+      LANGFUSE_INIT_USER_PASSWORD: wit3-admin
+    ports: ["127.0.0.1:3001:3000"]
+    depends_on: &langfuse-deps
+      postgres: { condition: service_healthy }
+      clickhouse: { condition: service_healthy }
+      redis: { condition: service_healthy }
+      minio: { condition: service_healthy }
+    logging: *logging
+
+  langfuse-worker:
+    image: langfuse/langfuse-worker:4.75.0
+    environment: *langfuse-env
+    depends_on: *langfuse-deps
+    logging: *logging
+
+  clickhouse:
+    image: clickhouse/clickhouse-server:26.3.62.3
+    user: "101:101"
+    environment:
+      CLICKHOUSE_DB: default
+      CLICKHOUSE_USER: clickhouse
+      CLICKHOUSE_PASSWORD: clickhouse
+    volumes: [clickhouse:/var/lib/clickhouse]
+    healthcheck:
+      test: wget --no-verbose --tries=1 --spider http://localhost:8123/ping || exit 1
+      interval: 5s
+      retries: 20
+    logging: *logging
+
+  redis:
+    image: redis:7.4-alpine
+    command: ["--requirepass", "wit3-redis", "--maxmemory-policy", "noeviction"]
+    healthcheck:
+      test: ["CMD", "redis-cli", "-a", "wit3-redis", "ping"]
+      interval: 3s
+      retries: 10
+    logging: *logging
+
+  minio:
+    image: cgr.dev/chainguard/minio@sha256:3c60a2a8c4d33409a9bc7a623a7fcbfb4605adc3d89422d2f53b3f673a6e5597
+    entrypoint: sh
+    command: -c 'mkdir -p /data/langfuse && minio server --address ":9000" /data'
+    environment:
+      MINIO_ROOT_USER: minio
+      MINIO_ROOT_PASSWORD: miniosecret
+    volumes: [minio:/data]
+    healthcheck:
+      test: ["CMD", "mc", "ready", "local"]
+      interval: 2s
+      retries: 15
+    logging: *logging
+
+  # ---------- подопытный сервис ----------
+  demo-api:
+    build: ./demo-api
+    environment:
+      DATABASE_URL: postgresql://shop:shop@postgres:5432/shop
+    ports: ["127.0.0.1:8000:8000"]
+    depends_on:
+      postgres: { condition: service_healthy }
+    logging: *logging
+
+  loadgen:
+    build: ./tools
+    command: ["python", "loadgen.py"]
+    depends_on: [demo-api]
+    logging: *logging
+
+  # ---------- метрики и логи сервиса ----------
+  prometheus:
+    image: prom/prometheus:v3.15.1
+    command: ["--config.file=/etc/prometheus/prometheus.yml", "--storage.tsdb.retention.time=3d"]
+    volumes: [./config/prometheus.yml:/etc/prometheus/prometheus.yml:ro]
+    ports: ["127.0.0.1:9090:9090"]
+    logging: *logging
+
+  loki:
+    image: grafana/loki:3.7.9
+    command: ["-config.file=/etc/loki/local-config.yaml"]
+    logging: *logging
+
+  alloy:
+    image: grafana/alloy:v1.21.3
+    command: ["run", "/etc/alloy/config.alloy"]
+    volumes:
+      - ./config/config.alloy:/etc/alloy/config.alloy:ro
+      - /var/run/docker.sock:/var/run/docker.sock:ro
+    depends_on: [loki]
+    logging: *logging
+
+  grafana:
+    image: grafana/grafana:13.2.5
+    environment:
+      GF_AUTH_ANONYMOUS_ENABLED: "true"
+      GF_AUTH_ANONYMOUS_ORG_ROLE: Admin
+      GF_AUTH_DISABLE_LOGIN_FORM: "true"
+    volumes:
+      - ./config/grafana/datasources.yml:/etc/grafana/provisioning/datasources/ds.yml:ro
+      - ./config/grafana/dashboards.yml:/etc/grafana/provisioning/dashboards/db.yml:ro
+      - ./config/grafana/dashboards:/var/lib/grafana/dashboards:ro
+    ports: ["127.0.0.1:3000:3000"]
+    logging: *logging
+
+  # ---------- CI (профиль ci) ----------
+  gitea:
+    image: gitea/gitea:1.24
+    profiles: [ci]
+    environment:
+      GITEA__database__DB_TYPE: postgres
+      GITEA__database__HOST: postgres:5432
+      GITEA__database__NAME: gitea
+      GITEA__database__USER: postgres
+      GITEA__database__PASSWD: postgres
+      GITEA__security__INSTALL_LOCK: "true"
+      GITEA__server__ROOT_URL: http://localhost:3002/
+      GITEA__server__HTTP_PORT: "3000"
+      GITEA__server__DISABLE_SSH: "true"
+      GITEA__actions__ENABLED: "true"
+      GITEA__service__DISABLE_REGISTRATION: "true"
+      GITEA_RUNNER_REGISTRATION_TOKEN: ${GITEA_RUNNER_TOKEN}
+    volumes: [gitea:/data]
+    ports: ["127.0.0.1:3002:3000"]
+    depends_on:
+      postgres: { condition: service_healthy }
+    logging: *logging
+
+  runner:
+    image: gitea/act_runner:0.6.1
+    profiles: [ci]
+    environment:
+      GITEA_INSTANCE_URL: http://gitea:3000
+      GITEA_RUNNER_REGISTRATION_TOKEN: ${GITEA_RUNNER_TOKEN}
+      GITEA_RUNNER_NAME: wit3-runner
+      GITEA_RUNNER_LABELS: ubuntu-latest:docker://python:3.12-slim
+      CONFIG_FILE: /config.yaml
+    volumes:
+      - ./config/runner.yaml:/config.yaml:ro
+      - runner:/data
+      - /var/run/docker.sock:/var/run/docker.sock
+    depends_on: [gitea]
+    logging: *logging
+
+  # ---------- агент, MCP, setup (запускаются через `docker compose run --rm tools ...`) ----------
+  tools:
+    build: ./tools
+    profiles: [tools]
+    environment:
+      LITELLM_BASE_URL: http://litellm:4000
+      LITELLM_MASTER_KEY: ${LITELLM_MASTER_KEY}
+      LITELLM_USER_KEY: ${LITELLM_USER_KEY}
+      DEMO_API_URL: http://demo-api:8000
+      PROMETHEUS_URL: http://prometheus:9090
+      DATABASE_URI: postgresql://agent_ro:agent_ro@postgres:5432/shop
+      GIT_REPO: /workspace
+      GITEA_URL: http://gitea:3000
+    volumes: [.:/workspace]
+
+volumes:
+  pg:
+  clickhouse:
+  minio:
+  ollama:
+  openwebui:
+  gitea:
+  runner:

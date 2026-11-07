@@ -1,0 +1,5 @@
+# act_runner: job-контейнеры подключаются к сети стенда, чтобы видеть gitea и litellm по именам
+runner:
+  capacity: 1
+container:
+  network: wit3_default

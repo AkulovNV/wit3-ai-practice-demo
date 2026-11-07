@@ -1,0 +1,3 @@
+apiVersion: 1
+providers:
+  - { name: wit3, type: file, options: { path: /var/lib/grafana/dashboards } }
