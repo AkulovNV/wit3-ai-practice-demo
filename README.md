@@ -144,6 +144,10 @@ OpenAI-совместимый endpoint: `http://localhost:4000/v1`, ключ `sk
   OPENAI_API_BASE=http://localhost:4000/v1 OPENAI_API_KEY=sk-mentee-wit3-local aider --model openai/local-coder
   ```
 
+## Личный AI-workflow
+
+Как работать с AI-ассистентом каждый день: [docs/ai-workflow.md](docs/ai-workflow.md) (ДЗ занятия 1).
+
 ## Управление
 
 ```bash
@@ -185,4 +189,5 @@ demo-api/.gitea/workflows AI-ревью PR
 demo-api/pr/              фича для PR #1 (материал для AI-ревью)
 tools/                    агент, MCP-серверы postgres/loki, setup, loadgen
 scripts/up.sh, up.ps1     запуск для macOS / Windows
+docs/ai-workflow.md       гайд по личному AI-workflow
 ```
