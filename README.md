@@ -72,7 +72,7 @@ powershell -ExecutionPolicy Bypass -File scripts\up.ps1
 
 Ключи LiteLLM:
 - `sk-mentee-wit3-local` — ваш рабочий ключ (бюджет $5 условных, 60 запросов/мин): им ходят Open WebUI, IDE, агент, CI.
-- `sk-limited-wit3-demo` — ключ для демонстрации лимитов (2 запроса/мин, бюджет $0.002).
+- `sk-limited-wit3-demo` — ключ для демонстрации лимитов (2 запроса/мин, бюджет $0.001).
 
 Цены у локальных моделей условные (`config/litellm.yaml`), чтобы бюджеты и учёт стоимости работали так же, как с облаком.
 
@@ -92,7 +92,7 @@ powershell -ExecutionPolicy Bypass -File scripts\up.ps1
 ```bash
 curl http://localhost:4000/v1/chat/completions -H "Authorization: Bearer sk-mentee-wit3-local" \
   -H "Content-Type: application/json" -d '{"model":"local-coder","messages":[{"role":"user","content":"Привет"}]}'
-# тот же запрос с ключом sk-limited-wit3-demo: третий за минуту → 429, а через ~6 запросов кончится бюджет
+# тот же запрос с ключом sk-limited-wit3-demo: третий за минуту → 429, а после одного длинного ответа кончится бюджет
 ```
 
 **2. Агент с одним тулом** (HTTP GET к demo-api):
@@ -190,4 +190,5 @@ demo-api/pr/              фича для PR #1 (материал для AI-ре
 tools/                    агент, MCP-серверы postgres/loki, setup, loadgen
 scripts/up.sh, up.ps1     запуск для macOS / Windows
 docs/ai-workflow.md       гайд по личному AI-workflow
+DEMO.md                   пошаговые демо занятия 1: gateway и первый агент
 ```

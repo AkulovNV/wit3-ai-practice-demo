@@ -82,6 +82,8 @@ Red team стенда: prompt injection, утечка секретов, прав
 - Все порты опубликованы только на `127.0.0.1`: учебные креды, Grafana с anonymous Admin, Open WebUI без auth и runner с `docker.sock` не должны быть видны из локальной сети.
 - Агент возвращает модели ошибки тулов (кривой JSON аргументов, исключения), а не падает; postgres-MCP — со `statement_timeout=5s`.
 - Все образы закреплены версией/дайджестом: плавающий `litellm:main-stable` и сломал связку с Langfuse v2. Обновлять осознанно и прогонять сценарии.
+- LiteLLM `/key/info` отвечает 200 и для удалённого ключа → `setup.py` проверяет существование через `/key/generate` (400 «already exists»). Расход ключа сбрасывать через `/key/update` со `spend: 0`, а не удалением.
+- Для демо занятия 1 достаточно `docker compose up -d litellm langfuse langfuse-worker demo-api` (~3 GB вместо ~4.4 GB).
 - Alloy фильтрует контейнеры по метке `com.docker.compose.project=wit3`, иначе тащит логи всего Docker (в т.ч. k8s).
 - `up.ps1` сохранён в UTF-8 с BOM (иначе PowerShell 5.1 ломает кириллицу), `.gitattributes` форсит LF. Синтаксис `up.ps1` проверен парсером pwsh, но **на живой Windows скрипт не запускался**.
 - Замер памяти: контейнеры ~4.4 GB (больше всего langfuse web+worker, litellm, open-webui, clickhouse, grafana), Ollama с 7B ~5.3 GB. Диск: образы ~4 GB сжатых, модели ~9.7 GB.
@@ -98,6 +100,6 @@ Red team стенда: prompt injection, утечка секретов, прав
 - [ ] RAG по коду/доке (эмбеддинги `local-embed` уже есть) — к занятию 2
 - [ ] Fallback при недоступности модели (`fallbacks` в LiteLLM) — к занятию 2
 - [ ] Evals промптов — к занятию 3
-- [ ] Сценарии демо для каждого занятия (пошаговые скрипты под презентации)
+- [ ] Сценарии демо для каждого занятия (пошаговые скрипты под презентации): занятие 1 — `DEMO.md`, прогнано 22.11.26; занятия 2–3 — нет
 - [x] Гайд по личному AI-workflow — `docs/ai-workflow.md`
 - [ ] Презентации занятий 1–3

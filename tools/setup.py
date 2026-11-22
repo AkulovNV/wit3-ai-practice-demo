@@ -33,13 +33,14 @@ def litellm_keys():
         # ключ менти: Open WebUI, IDE, агент, CI
         E["LITELLM_USER_KEY"]: {"key_alias": "mentee", "max_budget": 5, "rpm_limit": 60},
         # ключ для демо бюджета и rate limit: кончается через пару запросов
-        "sk-limited-wit3-demo": {"key_alias": "limited-demo", "max_budget": 0.002, "rpm_limit": 2},
+        "sk-limited-wit3-demo": {"key_alias": "limited-demo", "max_budget": 0.001, "rpm_limit": 2},
     }
     for key, params in keys.items():
-        if httpx.get(f"{LITELLM}/key/info", params={"key": key}, headers=h).status_code == 200:
+        # не проверяем через /key/info: он отвечает 200 и для удалённого ключа
+        r = httpx.post(f"{LITELLM}/key/generate", headers=h, json={"key": key, **params})
+        if r.status_code == 400 and "already exists" in r.text:
             print(f"✓ ключ {params['key_alias']} уже есть")
             continue
-        r = httpx.post(f"{LITELLM}/key/generate", headers=h, json={"key": key, **params})
         if r.is_error:
             sys.exit(f"✗ ключ {params['key_alias']}: {r.text}")
         print(f"✓ создан ключ {params['key_alias']}")
